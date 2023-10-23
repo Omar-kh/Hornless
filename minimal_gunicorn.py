@@ -1,10 +1,17 @@
+import os
 import socket
 from io import BytesIO
 import sys
 import importlib
-from threading import Thread
+import signal
 
 response_headers = []
+
+
+def signal_handler(signum, frame):
+    print("Received shutdown signal. Initiating graceful shutdown...")
+    # Graceful shutdown code will be placed here
+    sys.exit(0)
 
 
 def parse_request(data):
@@ -53,16 +60,36 @@ def send_response(client_socket, response_body):
     client_socket.sendall(response.encode())
 
 
-def serve(app, host="127.0.0.1", port=8000):
+def run_server(app, host="127.0.0.1", port=8000, num_workers=4):
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    # Step 1: Create and bind the server socket in the parent process
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_socket.bind((host, port))
-    server_socket.listen(1)
-    print(f"Serving on {host}:{port}")
+    server_socket.listen(10)
 
+    processes = []
+
+    for _ in range(num_workers):
+        pid = os.fork()
+        if pid == 0:  # Child process
+            serve(app, server_socket)  # Modified serve function to accept server_socket
+            os._exit(0)
+        else:
+            processes.append(pid)
+
+    # Parent process waits for all child processes to complete
+    for pid in processes:
+        os.waitpid(pid, 0)
+
+
+def serve(app, server_socket):
+    print(f"Worker {os.getpid()} is ready to serve!")
     while True:
         client_socket, addr = server_socket.accept()
-        Thread(target=wsgi_handler, args=(client_socket, app)).start()  # Use threading here
+        wsgi_handler(client_socket, app)
 
 
 if __name__ == "__main__":
@@ -75,7 +102,7 @@ if __name__ == "__main__":
 
     if hasattr(module, app_instance_name):
         app_instance = getattr(module, app_instance_name)
-        serve(app_instance)
+        run_server(app_instance)
     else:
         print(f"No '{app_instance_name}' found in {module_name}.")
         sys.exit(1)
