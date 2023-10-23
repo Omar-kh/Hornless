@@ -2,6 +2,7 @@ import socket
 from io import BytesIO
 import sys
 import importlib
+from threading import Thread
 
 response_headers = []
 
@@ -61,7 +62,7 @@ def serve(app, host="127.0.0.1", port=8000):
 
     while True:
         client_socket, addr = server_socket.accept()
-        wsgi_handler(client_socket, app)
+        Thread(target=wsgi_handler, args=(client_socket, app)).start()  # Use threading here
 
 
 if __name__ == "__main__":
